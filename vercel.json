@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/send-quiz-email",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}
