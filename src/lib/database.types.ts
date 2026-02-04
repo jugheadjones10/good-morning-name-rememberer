@@ -8,6 +8,7 @@ export type Database = {
           name: string;
           quiz_day: string;
           is_admin: boolean;
+          hide_surname: boolean;
           created_at: string;
         };
         Insert: {
@@ -16,6 +17,7 @@ export type Database = {
           name: string;
           quiz_day?: string;
           is_admin?: boolean;
+          hide_surname?: boolean;
           created_at?: string;
         };
         Update: {
@@ -24,6 +26,7 @@ export type Database = {
           name?: string;
           quiz_day?: string;
           is_admin?: boolean;
+          hide_surname?: boolean;
           created_at?: string;
         };
       };
@@ -82,6 +85,7 @@ export type Database = {
           next_review_date: string;
           last_reviewed_at: string | null;
           consecutive_correct: number;
+          mastered: boolean;
           created_at: string;
         };
         Insert: {
@@ -92,6 +96,7 @@ export type Database = {
           next_review_date?: string;
           last_reviewed_at?: string | null;
           consecutive_correct?: number;
+          mastered?: boolean;
           created_at?: string;
         };
         Update: {
@@ -102,6 +107,7 @@ export type Database = {
           next_review_date?: string;
           last_reviewed_at?: string | null;
           consecutive_correct?: number;
+          mastered?: boolean;
           created_at?: string;
         };
       };

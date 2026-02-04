@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { isValidKoreanName, getNameValidationError } from "../lib/koreanName";
 import { ImageEditor } from "../components/ImageEditor";
-import type { Child, Feedback } from "../lib/database.types";
+import type { Child, Feedback, Profile } from "../lib/database.types";
 
 interface OrphanedPhoto {
   name: string;
@@ -37,6 +37,14 @@ export function Admin() {
   } | null>(null);
   const [feedbackList, setFeedbackList] = useState<Feedback[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [editingChildId, setEditingChildId] = useState<string | null>(null);
+  const [editingChildName, setEditingChildName] = useState("");
+  const [editingChildNameError, setEditingChildNameError] = useState<
+    string | null
+  >(null);
+  const [savingChildName, setSavingChildName] = useState(false);
+  const [hideSurname, setHideSurname] = useState(false);
+  const [savingHideSurname, setSavingHideSurname] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -93,8 +101,45 @@ export function Admin() {
       fetchChildren(),
       fetchOrphanedPhotos(),
       fetchFeedback(),
+      fetchHideSurnameSetting(),
     ]);
     setLoading(false);
+  }
+
+  async function fetchHideSurnameSetting() {
+    // Fetch the hide_surname setting from any admin profile
+    const { data } = await supabase
+      .from("profiles")
+      .select("hide_surname")
+      .eq("is_admin", true)
+      .limit(1)
+      .single();
+
+    if (data) {
+      setHideSurname((data as Profile).hide_surname || false);
+    }
+  }
+
+  async function toggleHideSurname() {
+    setSavingHideSurname(true);
+    const newValue = !hideSurname;
+
+    try {
+      // Update all admin profiles with the new setting
+      const { error } = await supabase
+        .from("profiles")
+        .update({ hide_surname: newValue } as any)
+        .eq("is_admin", true);
+
+      if (error) throw error;
+
+      setHideSurname(newValue);
+    } catch (error) {
+      console.error("Error updating hide_surname:", error);
+      alert("설정 저장 중 오류가 발생했습니다.");
+    } finally {
+      setSavingHideSurname(false);
+    }
   }
 
   async function fetchFeedback() {
@@ -402,6 +447,48 @@ export function Admin() {
     }
   }
 
+  function startEditingChildName(child: Child) {
+    setEditingChildId(child.id);
+    setEditingChildName(child.name);
+    setEditingChildNameError(null);
+  }
+
+  function cancelEditingChildName() {
+    setEditingChildId(null);
+    setEditingChildName("");
+    setEditingChildNameError(null);
+  }
+
+  function handleEditingChildNameChange(value: string) {
+    setEditingChildName(value);
+    const error = getNameValidationError(value);
+    setEditingChildNameError(error);
+  }
+
+  async function handleUpdateChildName(childId: string) {
+    if (!isValidKoreanName(editingChildName)) {
+      return;
+    }
+
+    setSavingChildName(true);
+    try {
+      const { error } = await supabase
+        .from("children")
+        .update({ name: editingChildName } as any)
+        .eq("id", childId);
+
+      if (error) throw error;
+
+      await fetchChildren();
+      cancelEditingChildName();
+    } catch (error) {
+      console.error("Error updating child name:", error);
+      alert("이름 수정 중 오류가 발생했습니다.");
+    } finally {
+      setSavingChildName(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -454,6 +541,31 @@ export function Admin() {
                 등록된 아이가 없어서 이메일을 보낼 수 없습니다.
               </p>
             )}
+          </div>
+
+          {/* Hide Surname Toggle */}
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-gray-900">성 숨기기</p>
+                <p className="text-sm text-gray-600">
+                  퀴즈에서 이름의 첫 글자(성)를 숨깁니다. 예: 김민수 → 민수
+                </p>
+              </div>
+              <button
+                onClick={toggleHideSurname}
+                disabled={savingHideSurname}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                  hideSurname ? "bg-blue-600" : "bg-gray-200"
+                } ${savingHideSurname ? "opacity-50" : ""}`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    hideSurname ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -605,7 +717,7 @@ export function Admin() {
                       updateOrphanedPhotoName(index, e.target.value)
                     }
                     placeholder="이름 입력"
-                    maxLength={4}
+                    maxLength={5}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
                   />
                   <button
@@ -692,14 +804,14 @@ export function Admin() {
           {/* Name input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              이름 (한글 2~4글자)
+              이름 (한글 2~5글자)
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => handleNameChange(e.target.value)}
               placeholder="예: 김민수"
-              maxLength={4}
+              maxLength={5}
               className={`w-full px-4 py-3 text-lg border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                 nameError ? "border-red-300" : "border-gray-300"
               }`}
@@ -747,11 +859,74 @@ export function Admin() {
                     />
                   </div>
                   <div className="mt-2 text-center">
-                    <span className="font-medium text-gray-900">
-                      {child.name}
-                    </span>
+                    {editingChildId === child.id ? (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={editingChildName}
+                          onChange={(e) =>
+                            handleEditingChildNameChange(e.target.value)
+                          }
+                          className={`w-full px-2 py-1 text-sm border rounded ${
+                            editingChildNameError
+                              ? "border-red-300"
+                              : "border-gray-300"
+                          }`}
+                          maxLength={5}
+                          autoFocus
+                        />
+                        {editingChildNameError && (
+                          <p className="text-xs text-red-600">
+                            {editingChildNameError}
+                          </p>
+                        )}
+                        <div className="flex gap-1 justify-center">
+                          <button
+                            onClick={() => handleUpdateChildName(child.id)}
+                            disabled={
+                              !isValidKoreanName(editingChildName) ||
+                              savingChildName
+                            }
+                            className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                          >
+                            {savingChildName ? "..." : "저장"}
+                          </button>
+                          <button
+                            onClick={cancelEditingChildName}
+                            className="px-2 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                          >
+                            취소
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="font-medium text-gray-900">
+                          {child.name}
+                        </span>
+                        <button
+                          onClick={() => startEditingChildName(child)}
+                          className="p-1 text-gray-400 hover:text-blue-600"
+                          title="이름 수정"
+                        >
+                          <svg
+                            className="w-3 h-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {/* Edit button */}
+                  {/* Edit image button */}
                   <button
                     onClick={() =>
                       setEditingImage({

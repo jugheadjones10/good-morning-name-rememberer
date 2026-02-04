@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   name TEXT NOT NULL,  -- User's display name for leaderboard
   quiz_day TEXT DEFAULT 'monday' CHECK (quiz_day IN ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')),
   is_admin BOOLEAN DEFAULT FALSE,
+  hide_surname BOOLEAN DEFAULT FALSE,  -- Admin setting: hide first character (surname) in quiz
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -21,9 +22,9 @@ CREATE TABLE IF NOT EXISTS children (
   name TEXT NOT NULL,
   photo_url TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  -- Validate Korean name is 2-4 characters (가-힣 range)
-  -- Covers: 2-char (김수), 3-char (김민수), 4-char (남궁민수)
-  CONSTRAINT valid_korean_name CHECK (name ~ '^[\uAC00-\uD7AF]{2,4}$')
+  -- Validate Korean name is 2-5 characters (가-힣 range)
+  -- Covers: 2-char (김수), 3-char (김민수), 4-char (남궁민수), 5-char names
+  CONSTRAINT valid_korean_name CHECK (name ~ '^[\uAC00-\uD7AF]{2,5}$')
 );
 
 -- Quiz attempts for tracking progress
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS user_child_progress (
   next_review_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- When this child is due for review
   last_reviewed_at TIMESTAMPTZ,  -- Last time user reviewed this child
   consecutive_correct INTEGER NOT NULL DEFAULT 0,  -- Streak of correct answers
+  mastered BOOLEAN NOT NULL DEFAULT FALSE,  -- If true, child is fully memorized and won't appear in reviews
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, child_id)  -- One progress record per user per child
 );

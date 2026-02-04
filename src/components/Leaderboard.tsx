@@ -8,7 +8,7 @@ interface LeaderboardEntry {
   totalAttempts: number;
   correctAttempts: number;
   accuracy: number;
-  masteredChildren: number; // Children with interval >= 4 weeks
+  masteredChildren: number; // Children with interval >= 4 weeks OR marked as mastered
 }
 
 export function Leaderboard() {
@@ -46,7 +46,7 @@ export function Leaderboard() {
     // Get all progress data (to count mastered children)
     const { data: progress, error: progressError } = await supabase
       .from("user_child_progress")
-      .select("user_id, interval_weeks");
+      .select("user_id, interval_weeks, mastered");
 
     if (progressError) {
       console.error("Error fetching progress:", progressError);
@@ -69,13 +69,14 @@ export function Leaderboard() {
         (a: { is_correct: boolean }) => a.is_correct
       ).length;
 
-      // Count mastered children (interval >= 4 weeks)
+      // Count mastered children (interval >= 4 weeks OR marked as mastered)
       const userProgress = (progress || []).filter(
-        (p: { user_id: string; interval_weeks: number }) =>
+        (p: { user_id: string; interval_weeks: number; mastered?: boolean }) =>
           p.user_id === profile.id
       );
       const masteredChildren = userProgress.filter(
-        (p: { interval_weeks: number }) => p.interval_weeks >= 4
+        (p: { interval_weeks: number; mastered?: boolean }) =>
+          p.interval_weeks >= 4 || p.mastered === true
       ).length;
 
       leaderboard.push({

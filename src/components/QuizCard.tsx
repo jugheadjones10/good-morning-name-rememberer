@@ -5,20 +5,27 @@ import { matchName } from "../lib/koreanName";
 interface QuizCardProps {
   child: Child;
   onAnswer: (isCorrect: boolean, answer: string) => void;
+  onMarkMastered?: () => void;
   showResult: boolean;
   userAnswer: string | null;
+  hideSurname?: boolean;
 }
 
 export function QuizCard({
   child,
   onAnswer,
+  onMarkMastered,
   showResult,
   userAnswer,
+  hideSurname = false,
 }: QuizCardProps) {
   const [answer, setAnswer] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const isCorrect =
-    userAnswer !== null ? matchName(userAnswer, child.name) : null;
+    userAnswer !== null ? matchName(userAnswer, child.name, hideSurname) : null;
+
+  // Display name based on hideSurname setting
+  const displayName = hideSurname ? child.name.slice(1) : child.name;
 
   useEffect(() => {
     // Clear answer and focus input when moving to a new child
@@ -38,7 +45,7 @@ export function QuizCard({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (answer.trim() && !showResult) {
-      onAnswer(matchName(answer, child.name), answer.trim());
+      onAnswer(matchName(answer, child.name, hideSurname), answer.trim());
     }
   }
 
@@ -50,7 +57,6 @@ export function QuizCard({
           src={child.photo_url}
           alt="아이 사진"
           className="w-full h-full object-cover"
-          loading="lazy"
         />
       </div>
 
@@ -69,7 +75,7 @@ export function QuizCard({
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 placeholder="이름 입력"
-                maxLength={4}
+                maxLength={5}
                 className="w-full px-4 py-4 text-xl text-center border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 autoComplete="off"
                 autoCapitalize="off"
@@ -77,7 +83,7 @@ export function QuizCard({
               />
               <button
                 type="submit"
-                disabled={answer.trim().length < 2 || answer.trim().length > 4}
+                disabled={answer.trim().length < 2 || answer.trim().length > 5}
                 className="w-full mt-4 bg-blue-600 text-white py-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed touch-target text-lg"
               >
                 확인
@@ -112,11 +118,35 @@ export function QuizCard({
                   <div className="flex justify-between items-center">
                     <span className="text-gray-600">정답:</span>
                     <span className="font-bold text-lg text-blue-600">
-                      {child.name}
+                      {displayName}
                     </span>
                   </div>
                 )}
               </div>
+
+              {/* Mark as mastered button - only show on correct answers */}
+              {isCorrect && onMarkMastered && (
+                <button
+                  type="button"
+                  onClick={onMarkMastered}
+                  className="w-full mt-2 text-sm bg-purple-100 text-purple-700 border border-purple-300 hover:bg-purple-200 hover:border-purple-400 py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  완전히 외웠어요 (더 이상 안 봐도 됨)
+                </button>
+              )}
             </div>
           )}
         </form>

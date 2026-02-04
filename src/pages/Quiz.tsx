@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { QuizCard } from "../components/QuizCard";
-import type { Child, UserChildProgress } from "../lib/database.types";
+import type { Child, UserChildProgress, Profile } from "../lib/database.types";
 
 interface ChildWithProgress extends Child {
   progress?: UserChildProgress;
@@ -35,6 +35,7 @@ export function Quiz() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [totalChildren, setTotalChildren] = useState(0);
+  const [hideSurname, setHideSurname] = useState(false);
   const [quiz, setQuiz] = useState<QuizState>({
     children: [],
     currentIndex: 0,
@@ -45,9 +46,24 @@ export function Quiz() {
 
   useEffect(() => {
     if (user) {
+      fetchHideSurnameSetting();
       fetchChildrenDueForReview();
     }
   }, [user]);
+
+  async function fetchHideSurnameSetting() {
+    // Fetch the hide_surname setting from any admin profile
+    const { data } = await supabase
+      .from("profiles")
+      .select("hide_surname")
+      .eq("is_admin", true)
+      .limit(1)
+      .single();
+
+    if (data) {
+      setHideSurname((data as Profile).hide_surname || false);
+    }
+  }
 
   async function fetchChildrenDueForReview() {
     if (!user) return;
@@ -85,10 +101,12 @@ export function Quiz() {
     // Filter children that are due for review:
     // 1. No progress record (new child) -> due immediately
     // 2. next_review_date <= today -> due for review
+    // 3. Not marked as mastered
     const dueChildren: ChildWithProgress[] = ((allChildren as Child[]) || [])
       .filter((child) => {
         const progress = progressMap.get(child.id);
         if (!progress) return true; // New child, due immediately
+        if (progress.mastered) return false; // Skip mastered children
         return progress.next_review_date <= today;
       })
       .map((child) => ({
@@ -102,6 +120,22 @@ export function Quiz() {
     }));
     setLoading(false);
   }
+
+  // Preload next images to eliminate delay when switching cards
+  useEffect(() => {
+    if (quiz.children.length === 0) return;
+
+    // Preload the next 2 images
+    const nextChildren = quiz.children.slice(
+      quiz.currentIndex + 1,
+      quiz.currentIndex + 3
+    );
+
+    nextChildren.forEach((child) => {
+      const img = new Image();
+      img.src = child.photo_url;
+    });
+  }, [quiz.currentIndex, quiz.children]);
 
   const handleAnswer = useCallback(
     async (isCorrect: boolean, answer: string) => {
@@ -202,6 +236,56 @@ export function Quiz() {
         showResult: false,
       }));
     }
+  }
+
+  async function markAsMastered() {
+    if (!user) return;
+
+    const currentChild = quiz.children[quiz.currentIndex];
+
+    // Get or create progress record and mark as mastered
+    const { data: existingProgress } = await supabase
+      .from("user_child_progress")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("child_id", currentChild.id)
+      .single();
+
+    if (existingProgress) {
+      const { error } = await supabase
+        .from("user_child_progress")
+        .update({ mastered: true } as any)
+        .eq("id", (existingProgress as UserChildProgress).id);
+
+      if (error) {
+        console.error("Error marking as mastered:", error);
+        alert("저장 중 오류가 발생했습니다.");
+        return;
+      }
+    } else {
+      // Create new progress record marked as mastered
+      // Set a far future review date so it won't appear again
+      const farFuture = new Date();
+      farFuture.setFullYear(farFuture.getFullYear() + 10);
+
+      const { error } = await supabase.from("user_child_progress").insert({
+        user_id: user.id,
+        child_id: currentChild.id,
+        interval_weeks: 52, // 1 year
+        next_review_date: farFuture.toISOString().split("T")[0],
+        consecutive_correct: 0,
+        mastered: true,
+      } as any);
+
+      if (error) {
+        console.error("Error creating mastered record:", error);
+        alert("저장 중 오류가 발생했습니다.");
+        return;
+      }
+    }
+
+    // Move to next card
+    handleNext();
   }
 
   function restartQuiz() {
@@ -340,7 +424,7 @@ export function Quiz() {
                         <div className="text-sm text-gray-600">
                           정답:{" "}
                           <span className="text-green-600 font-medium">
-                            {child?.name}
+                            {hideSurname ? child?.name.slice(1) : child?.name}
                           </span>
                         </div>
                       </div>
@@ -383,8 +467,10 @@ export function Quiz() {
       <QuizCard
         child={currentChild}
         onAnswer={handleAnswer}
+        onMarkMastered={markAsMastered}
         showResult={quiz.showResult}
         userAnswer={currentAnswer?.answer ?? null}
+        hideSurname={hideSurname}
       />
 
       {/* Next button */}
