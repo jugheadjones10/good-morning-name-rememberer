@@ -85,6 +85,11 @@ CREATE POLICY "Anyone can update profiles"
   TO anon, authenticated
   USING (true);
 
+CREATE POLICY "Anyone can delete own profile"
+  ON profiles FOR DELETE
+  TO anon, authenticated
+  USING (true);
+
 -- Children: Anyone can read, admins can modify
 CREATE POLICY "Anyone can view children"
   ON children FOR SELECT
