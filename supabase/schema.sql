@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   email TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,  -- User's display name for leaderboard
   quiz_day TEXT DEFAULT 'monday' CHECK (quiz_day IN ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')),
+  email_enabled BOOLEAN DEFAULT TRUE,  -- Whether to receive weekly quiz emails
   is_admin BOOLEAN DEFAULT FALSE,
   hide_surname BOOLEAN DEFAULT FALSE,  -- Admin setting: hide first character (surname) in quiz
   created_at TIMESTAMPTZ DEFAULT NOW()

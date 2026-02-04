@@ -96,7 +96,9 @@ async function sendEmail(to: string, children: Child[]) {
     body: JSON.stringify({
       // For testing: use 'onboarding@resend.dev'
       // For production: use your verified domain like 'quiz@yourdomain.com'
-      from: process.env.EMAIL_FROM || "굿모닝 아이들 이름 퀴즈 <onboarding@resend.dev>",
+      from:
+        process.env.EMAIL_FROM ||
+        "굿모닝 아이들 이름 퀴즈 <onboarding@resend.dev>",
       to: [to],
       subject: "☀️ 굿모닝! 아이들 이름 퀴즈가 도착했습니다",
       html: emailHtml,
@@ -168,11 +170,12 @@ export default async function handler(req: Request) {
     const today = getDayOfWeek();
     console.log(`Running quiz email job for: ${today}`);
 
-    // Get all users who want emails on this day
+    // Get all users who want emails on this day (and have emails enabled)
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, email, quiz_day")
       .eq("quiz_day", today)
+      .eq("email_enabled", true)
       .not("email", "is", null);
 
     if (profilesError) {

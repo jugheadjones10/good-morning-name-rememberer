@@ -7,6 +7,7 @@ export type Database = {
           email: string | null;
           name: string;
           quiz_day: string;
+          email_enabled: boolean;
           is_admin: boolean;
           hide_surname: boolean;
           created_at: string;
@@ -16,6 +17,7 @@ export type Database = {
           email?: string | null;
           name: string;
           quiz_day?: string;
+          email_enabled?: boolean;
           is_admin?: boolean;
           hide_surname?: boolean;
           created_at?: string;
@@ -25,6 +27,7 @@ export type Database = {
           email?: string | null;
           name?: string;
           quiz_day?: string;
+          email_enabled?: boolean;
           is_admin?: boolean;
           hide_surname?: boolean;
           created_at?: string;
