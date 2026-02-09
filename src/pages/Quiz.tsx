@@ -36,6 +36,8 @@ export function Quiz() {
   const [loading, setLoading] = useState(true);
   const [totalChildren, setTotalChildren] = useState(0);
   const [hideSurname, setHideSurname] = useState(false);
+  const [practiceMode, setPracticeMode] = useState(false);
+  const [allChildrenCache, setAllChildrenCache] = useState<Child[]>([]);
   const [quiz, setQuiz] = useState<QuizState>({
     children: [],
     currentIndex: 0,
@@ -79,7 +81,9 @@ export function Quiz() {
       return;
     }
 
-    setTotalChildren(allChildren?.length || 0);
+    const childrenList = (allChildren as Child[]) || [];
+    setTotalChildren(childrenList.length);
+    setAllChildrenCache(childrenList);
 
     // Get user's progress for all children
     const { data: progressData, error: progressError } = await supabase
@@ -141,16 +145,17 @@ export function Quiz() {
     async (isCorrect: boolean, answer: string) => {
       const currentChild = quiz.children[quiz.currentIndex];
 
-      // Record the attempt
-      await supabase.from("quiz_attempts").insert({
-        user_id: user!.id,
-        child_id: currentChild.id,
-        user_answer: answer,
-        is_correct: isCorrect,
-      } as any);
+      // Only record attempts and update progress in normal mode (not practice)
+      if (!practiceMode) {
+        await supabase.from("quiz_attempts").insert({
+          user_id: user!.id,
+          child_id: currentChild.id,
+          user_answer: answer,
+          is_correct: isCorrect,
+        } as any);
 
-      // Update spaced repetition progress
-      await updateProgress(currentChild, isCorrect);
+        await updateProgress(currentChild, isCorrect);
+      }
 
       setQuiz((prev) => ({
         ...prev,
@@ -298,6 +303,22 @@ export function Quiz() {
     });
   }
 
+  function startPracticeQuiz() {
+    // Use all children for practice
+    const practiceChildren = allChildrenCache;
+
+    if (practiceChildren.length === 0) return;
+
+    setPracticeMode(true);
+    setQuiz({
+      children: shuffleArray(practiceChildren),
+      currentIndex: 0,
+      answers: [],
+      showResult: false,
+      completed: false,
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -334,7 +355,7 @@ export function Quiz() {
     );
   }
 
-  if (quiz.children.length === 0) {
+  if (quiz.children.length === 0 && !practiceMode) {
     return (
       <div className="bg-white rounded-lg shadow-sm p-6 text-center">
         <div className="text-6xl mb-4">🎉</div>
@@ -348,12 +369,20 @@ export function Quiz() {
           전체 {totalChildren}명 중 모든 아이의 다음 복습일이 아직 오지
           않았습니다.
         </p>
-        <Link
-          to="/"
-          className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700"
-        >
-          홈으로
-        </Link>
+        <div className="space-y-3">
+          <button
+            onClick={startPracticeQuiz}
+            className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700"
+          >
+            더 연습하기
+          </button>
+          <Link
+            to="/"
+            className="block w-full bg-gray-100 text-gray-700 px-6 py-3 rounded-lg font-medium hover:bg-gray-200"
+          >
+            홈으로
+          </Link>
+        </div>
       </div>
     );
   }
@@ -387,6 +416,14 @@ export function Quiz() {
           >
             다시 시작
           </button>
+          {!practiceMode && (
+            <button
+              onClick={startPracticeQuiz}
+              className="w-full bg-purple-600 text-white py-4 rounded-lg font-medium hover:bg-purple-700 touch-target text-lg"
+            >
+              더 연습하기
+            </button>
+          )}
           <Link
             to="/"
             className="block w-full bg-gray-100 text-gray-700 py-4 rounded-lg font-medium hover:bg-gray-200 touch-target text-lg"
@@ -443,6 +480,15 @@ export function Quiz() {
 
   return (
     <div className="space-y-4">
+      {/* Practice mode badge */}
+      {practiceMode && (
+        <div className="bg-purple-100 border border-purple-200 rounded-lg p-3 text-center">
+          <span className="text-purple-700 font-medium text-sm">
+            연습 모드 - 기록에 반영되지 않습니다
+          </span>
+        </div>
+      )}
+
       {/* Progress bar */}
       <div className="bg-white rounded-lg shadow-sm p-4">
         <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
@@ -453,7 +499,9 @@ export function Quiz() {
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+            className={`h-2 rounded-full transition-all duration-300 ${
+              practiceMode ? "bg-purple-600" : "bg-blue-600"
+            }`}
             style={{
               width: `${
                 ((quiz.currentIndex + 1) / quiz.children.length) * 100
@@ -467,7 +515,7 @@ export function Quiz() {
       <QuizCard
         child={currentChild}
         onAnswer={handleAnswer}
-        onMarkMastered={markAsMastered}
+        onMarkMastered={practiceMode ? undefined : markAsMastered}
         showResult={quiz.showResult}
         userAnswer={currentAnswer?.answer ?? null}
         hideSurname={hideSurname}
