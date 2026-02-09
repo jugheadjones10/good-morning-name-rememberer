@@ -1,8 +1,20 @@
 // Vercel Serverless Function for sending weekly quiz emails
 // Triggered by Vercel Cron
+// Uses Node.js runtime for nodemailer compatibility
 
 import { createClient } from "@supabase/supabase-js";
 import * as nodemailer from "nodemailer";
+
+// Vercel Node.js runtime request/response types
+interface VercelRequest {
+  query: Record<string, string | string[] | undefined>;
+  headers: Record<string, string | string[] | undefined>;
+}
+interface VercelResponse {
+  status(code: number): VercelResponse;
+  json(body: any): void;
+  send(body: string): void;
+}
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -126,20 +138,19 @@ async function logEmail(
   }
 }
 
-export default async function handler(req: Request) {
-  // Parse URL for test mode (use dummy base for relative URLs in Node.js runtime)
-  const url = new URL(req.url, "http://localhost");
-  const isTestMode = url.searchParams.get("test") === "true";
-  const testEmail = url.searchParams.get("email");
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Parse query params (Node.js runtime provides req.query directly)
+  const isTestMode = req.query.test === "true";
+  const testEmail = req.query.email as string | undefined;
 
   // Verify cron secret (optional security) - skip for test mode with email
-  const authHeader = req.headers.get("authorization");
+  const authHeader = req.headers["authorization"] as string | undefined;
   if (
     !isTestMode &&
     process.env.CRON_SECRET &&
     authHeader !== `Bearer ${process.env.CRON_SECRET}`
   ) {
-    return new Response("Unauthorized", { status: 401 });
+    return res.status(401).send("Unauthorized");
   }
 
   try {
@@ -157,33 +168,27 @@ export default async function handler(req: Request) {
       }
 
       if (!children || children.length === 0) {
-        return new Response(
-          JSON.stringify({ error: "No children registered" }),
-          {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
+        return res.status(400).json({ error: "No children registered" });
       }
 
       try {
         await sendEmail(testEmail, children);
         await logEmail(testEmail, "sent", null, children.length, "test");
       } catch (error: any) {
-        await logEmail(testEmail, "failed", error?.message || String(error), children.length, "test");
+        await logEmail(
+          testEmail,
+          "failed",
+          error?.message || String(error),
+          children.length,
+          "test"
+        );
         throw error;
       }
 
-      return new Response(
-        JSON.stringify({
-          message: `Test email sent to ${testEmail}`,
-          children: children.length,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      return res.status(200).json({
+        message: `Test email sent to ${testEmail}`,
+        children: children.length,
+      });
     }
 
     const today = getDayOfWeek();
@@ -203,13 +208,9 @@ export default async function handler(req: Request) {
 
     if (!profiles || profiles.length === 0) {
       console.log("No users scheduled for today");
-      return new Response(
-        JSON.stringify({ message: "No users scheduled for today" }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      return res
+        .status(200)
+        .json({ message: "No users scheduled for today" });
     }
 
     // Get all children for the quiz
@@ -223,56 +224,48 @@ export default async function handler(req: Request) {
 
     if (!children || children.length === 0) {
       console.log("No children registered");
-      return new Response(
-        JSON.stringify({ message: "No children registered" }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      return res.status(200).json({ message: "No children registered" });
     }
 
     // Send emails sequentially to avoid rate limits
-    const results: PromiseSettledResult<any>[] = [];
+    let sent = 0;
+    let failed = 0;
+
     for (const profile of profiles as Profile[]) {
       try {
-        const result = await sendEmail(profile.email, children);
-        results.push({ status: "fulfilled", value: result });
-        await logEmail(profile.email, "sent", null, children.length, "cron");
+        await sendEmail(profile.email, children);
+        await logEmail(
+          profile.email,
+          "sent",
+          null,
+          children.length,
+          "cron"
+        );
+        sent++;
       } catch (error: any) {
-        results.push({ status: "rejected", reason: error });
-        await logEmail(profile.email, "failed", error?.message || String(error), children.length, "cron");
+        await logEmail(
+          profile.email,
+          "failed",
+          error?.message || String(error),
+          children.length,
+          "cron"
+        );
+        failed++;
       }
-      // Wait 600ms between emails to stay under rate limits
+      // Wait 600ms between emails to avoid rate limits
       await new Promise((resolve) => setTimeout(resolve, 600));
     }
 
-    const sent = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.filter((r) => r.status === "rejected").length;
-
     console.log(`Emails sent: ${sent}, failed: ${failed}`);
 
-    return new Response(
-      JSON.stringify({
-        message: `Sent ${sent} emails, ${failed} failed`,
-        day: today,
-        recipients: profiles.length,
-        children: children.length,
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    return res.status(200).json({
+      message: `Sent ${sent} emails, ${failed} failed`,
+      day: today,
+      recipients: profiles.length,
+      children: children.length,
+    });
   } catch (error) {
     console.error("Error sending quiz emails:", error);
-    return new Response(JSON.stringify({ error: "Failed to send emails" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return res.status(500).json({ error: "Failed to send emails" });
   }
 }
-
-export const config = {
-  runtime: "edge",
-};
