@@ -127,8 +127,8 @@ async function logEmail(
 }
 
 export default async function handler(req: Request) {
-  // Parse URL for test mode
-  const url = new URL(req.url);
+  // Parse URL for test mode (use dummy base for relative URLs in Node.js runtime)
+  const url = new URL(req.url, "http://localhost");
   const isTestMode = url.searchParams.get("test") === "true";
   const testEmail = url.searchParams.get("email");
 
