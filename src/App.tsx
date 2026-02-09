@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Home } from "./pages/Home";
 import { Quiz } from "./pages/Quiz";
 import { Admin } from "./pages/Admin";
+import { EmailLogs } from "./pages/EmailLogs";
 import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
 import { Layout } from "./components/Layout";
@@ -64,6 +65,14 @@ function App() {
               element={
                 <AdminRoute>
                   <Admin />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="email-logs"
+              element={
+                <AdminRoute>
+                  <EmailLogs />
                 </AdminRoute>
               }
             />

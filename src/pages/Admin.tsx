@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { isValidKoreanName, getNameValidationError } from "../lib/koreanName";
@@ -541,6 +542,12 @@ export function Admin() {
                 등록된 아이가 없어서 이메일을 보낼 수 없습니다.
               </p>
             )}
+            <Link
+              to="/email-logs"
+              className="inline-block mt-3 text-sm text-purple-600 hover:text-purple-800 underline"
+            >
+              이메일 발송 로그 보기 →
+            </Link>
           </div>
 
           {/* Hide Surname Toggle */}

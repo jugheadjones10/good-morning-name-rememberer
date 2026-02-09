@@ -2,11 +2,21 @@
 // Triggered by Vercel Cron
 
 import { createClient } from "@supabase/supabase-js";
+import * as nodemailer from "nodemailer";
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const resendApiKey = process.env.RESEND_API_KEY!;
+const gmailUser = process.env.GMAIL_USER || "kimyoungjin1001@gmail.com";
+const gmailAppPassword = process.env.GMAIL_APP_PASSWORD!;
 const appUrl = process.env.VITE_APP_URL || "https://your-app.vercel.app";
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: gmailUser,
+    pass: gmailAppPassword,
+  },
+});
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -87,30 +97,33 @@ async function sendEmail(to: string, children: Child[]) {
 </html>
   `;
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // For testing: use 'onboarding@resend.dev'
-      // For production: use your verified domain like 'quiz@yourdomain.com'
-      from:
-        process.env.EMAIL_FROM ||
-        "굿모닝 아이들 이름 퀴즈 <onboarding@resend.dev>",
-      to: [to],
-      subject: "☀️ 굿모닝! 아이들 이름 퀴즈가 도착했습니다",
-      html: emailHtml,
-    }),
+  await transporter.sendMail({
+    from: `"굿모닝 아이들 이름 퀴즈" <${gmailUser}>`,
+    to,
+    subject: "☀️ 굿모닝! 아이들 이름 퀴즈가 도착했습니다",
+    html: emailHtml,
   });
+}
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to send email: ${error}`);
+async function logEmail(
+  recipientEmail: string,
+  status: "sent" | "failed",
+  errorMessage: string | null,
+  childrenCount: number,
+  triggerType: "cron" | "test"
+) {
+  try {
+    await supabase.from("email_logs").insert({
+      recipient_email: recipientEmail,
+      status,
+      error_message: errorMessage,
+      children_count: childrenCount,
+      trigger_type: triggerType,
+    });
+  } catch (e) {
+    // Don't let logging failures break email sending
+    console.error("Failed to log email:", e);
   }
-
-  return response.json();
 }
 
 export default async function handler(req: Request) {
@@ -153,7 +166,13 @@ export default async function handler(req: Request) {
         );
       }
 
-      await sendEmail(testEmail, children);
+      try {
+        await sendEmail(testEmail, children);
+        await logEmail(testEmail, "sent", null, children.length, "test");
+      } catch (error: any) {
+        await logEmail(testEmail, "failed", error?.message || String(error), children.length, "test");
+        throw error;
+      }
 
       return new Response(
         JSON.stringify({
@@ -213,10 +232,20 @@ export default async function handler(req: Request) {
       );
     }
 
-    // Send emails to each user
-    const results = await Promise.allSettled(
-      profiles.map((profile: Profile) => sendEmail(profile.email, children))
-    );
+    // Send emails sequentially to avoid rate limits
+    const results: PromiseSettledResult<any>[] = [];
+    for (const profile of profiles as Profile[]) {
+      try {
+        const result = await sendEmail(profile.email, children);
+        results.push({ status: "fulfilled", value: result });
+        await logEmail(profile.email, "sent", null, children.length, "cron");
+      } catch (error: any) {
+        results.push({ status: "rejected", reason: error });
+        await logEmail(profile.email, "failed", error?.message || String(error), children.length, "cron");
+      }
+      // Wait 600ms between emails to stay under rate limits
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.filter((r) => r.status === "rejected").length;
@@ -245,5 +274,5 @@ export default async function handler(req: Request) {
 }
 
 export const config = {
-  runtime: "edge",
+  runtime: "nodejs",
 };
