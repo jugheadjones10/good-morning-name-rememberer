@@ -25,3 +25,6 @@ npm-debug.log*
 
 # Vercel
 .vercel
+
+# Local photo import source data
+초등부 아이들/
