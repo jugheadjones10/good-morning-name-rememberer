@@ -12,30 +12,47 @@ const DAYS_OF_WEEK = [
   { value: "sunday", label: "일요일" },
 ];
 
+const CARDS_PER_SESSION_PRESETS = [10, 15, 20, 30];
+
 export function Settings() {
   const { user, profile, signOut } = useAuth();
   const [name, setName] = useState(profile?.name || "");
-  const [quizDay, setQuizDay] = useState(profile?.quiz_day || "monday");
-  const [emailEnabled, setEmailEnabled] = useState(
-    profile?.email_enabled ?? true
-  );
   const [savingName, setSavingName] = useState(false);
   const [savedName, setSavedName] = useState(false);
-  const [savingDay, setSavingDay] = useState(false);
-  const [savedDay, setSavedDay] = useState(false);
+  const [hideSurname, setHideSurname] = useState(
+    profile?.hide_surname ?? true
+  );
+  const [savingHideSurname, setSavingHideSurname] = useState(false);
+
+  const [emailFrequency, setEmailFrequency] = useState<"daily" | "weekly" | "off">(
+    profile?.email_frequency ?? "daily"
+  );
+  const [quizDay, setQuizDay] = useState(profile?.quiz_day || "saturday");
   const [savingEmail, setSavingEmail] = useState(false);
+  const [savedEmail, setSavedEmail] = useState(false);
+
+  const [cardsPerSession, setCardsPerSession] = useState(
+    profile?.cards_per_session ?? 20
+  );
+  const [customCards, setCustomCards] = useState("");
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [savingCards, setSavingCards] = useState(false);
+  const [savedCards, setSavedCards] = useState(false);
+
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (profile?.name) {
-      setName(profile.name);
-    }
-    if (profile?.quiz_day) {
-      setQuizDay(profile.quiz_day);
-    }
-    if (profile?.email_enabled !== undefined) {
-      setEmailEnabled(profile.email_enabled);
+    if (profile?.name) setName(profile.name);
+    if (profile?.quiz_day) setQuizDay(profile.quiz_day);
+    if (profile?.hide_surname !== undefined) setHideSurname(profile.hide_surname);
+    if (profile?.email_frequency) setEmailFrequency(profile.email_frequency);
+    if (profile?.cards_per_session) {
+      setCardsPerSession(profile.cards_per_session);
+      if (!CARDS_PER_SESSION_PRESETS.includes(profile.cards_per_session)) {
+        setShowCustomInput(true);
+        setCustomCards(String(profile.cards_per_session));
+      }
     }
   }, [profile]);
 
@@ -61,37 +78,43 @@ export function Settings() {
     }
   }
 
-  async function handleSaveDay() {
+  async function handleToggleHideSurname() {
     if (!user) return;
 
-    setSavingDay(true);
-    setSavedDay(false);
+    setSavingHideSurname(true);
+    const newValue = !hideSurname;
 
     const { error } = await supabase
       .from("profiles")
-      .update({ quiz_day: quizDay } as any)
+      .update({ hide_surname: newValue } as any)
       .eq("id", user.id);
 
-    setSavingDay(false);
+    setSavingHideSurname(false);
 
     if (error) {
-      console.error("Error saving settings:", error);
+      console.error("Error saving hide_surname:", error);
       alert("저장 중 오류가 발생했습니다.");
     } else {
-      setSavedDay(true);
-      setTimeout(() => setSavedDay(false), 2000);
+      setHideSurname(newValue);
     }
   }
 
-  async function handleToggleEmail() {
+  async function handleSaveEmailSettings() {
     if (!user) return;
 
     setSavingEmail(true);
-    const newValue = !emailEnabled;
+    setSavedEmail(false);
+
+    const updateData: any = { email_frequency: emailFrequency };
+    if (emailFrequency === "weekly") {
+      updateData.quiz_day = quizDay;
+    }
+    // Keep email_enabled in sync for backward compat
+    updateData.email_enabled = emailFrequency !== "off";
 
     const { error } = await supabase
       .from("profiles")
-      .update({ email_enabled: newValue } as any)
+      .update(updateData)
       .eq("id", user.id);
 
     setSavingEmail(false);
@@ -100,7 +123,31 @@ export function Settings() {
       console.error("Error saving email settings:", error);
       alert("저장 중 오류가 발생했습니다.");
     } else {
-      setEmailEnabled(newValue);
+      setSavedEmail(true);
+      setTimeout(() => setSavedEmail(false), 2000);
+    }
+  }
+
+  async function handleSaveCardsPerSession(value: number) {
+    if (!user) return;
+
+    setCardsPerSession(value);
+    setSavingCards(true);
+    setSavedCards(false);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ cards_per_session: value } as any)
+      .eq("id", user.id);
+
+    setSavingCards(false);
+
+    if (error) {
+      console.error("Error saving cards_per_session:", error);
+      alert("저장 중 오류가 발생했습니다.");
+    } else {
+      setSavedCards(true);
+      setTimeout(() => setSavedCards(false), 2000);
     }
   }
 
@@ -120,7 +167,7 @@ export function Settings() {
       return;
     }
 
-    signOut(); // Clear local session
+    signOut();
   }
 
   return (
@@ -156,69 +203,174 @@ export function Settings() {
         </div>
       </div>
 
-      {/* Email settings */}
+      {/* Quiz settings */}
       <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">이메일 설정</h2>
+        <h2 className="text-xl font-bold text-gray-900 mb-4">퀴즈 설정</h2>
 
-        <div className="space-y-4">
-          {/* Email enabled toggle */}
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-900">주간 퀴즈 이메일 받기</p>
-              <p className="text-sm text-gray-500">
-                매주 퀴즈 링크가 포함된 이메일을 받습니다.
-              </p>
-            </div>
+        {/* Hide surname */}
+        <div className="flex items-center justify-between py-3 border-b border-gray-100">
+          <div>
+            <p className="font-medium text-gray-900">성 숨기기</p>
+            <p className="text-sm text-gray-500">
+              퀴즈에서 이름의 첫 글자(성)를 숨깁니다. 예: 김민수 → 민수
+            </p>
+          </div>
+          <button
+            onClick={handleToggleHideSurname}
+            disabled={savingHideSurname}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+              hideSurname ? "bg-blue-600" : "bg-gray-200"
+            } ${savingHideSurname ? "opacity-50" : ""}`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                hideSurname ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Cards per session */}
+        <div className="py-4">
+          <p className="font-medium text-gray-900 mb-1">세션 당 카드 수</p>
+          <p className="text-sm text-gray-500 mb-3">
+            한 세션에 풀 퀴즈 카드 수를 선택하세요.
+          </p>
+          <div className="flex gap-2">
+            {CARDS_PER_SESSION_PRESETS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => {
+                  setShowCustomInput(false);
+                  handleSaveCardsPerSession(n);
+                }}
+                disabled={savingCards}
+                className={`flex-1 py-3 rounded-lg font-medium text-sm transition-colors ${
+                  cardsPerSession === n && !showCustomInput
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                } ${savingCards ? "opacity-50" : ""}`}
+              >
+                {n}장
+              </button>
+            ))}
             <button
-              onClick={handleToggleEmail}
-              disabled={savingEmail}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                emailEnabled ? "bg-blue-600" : "bg-gray-200"
-              } ${savingEmail ? "opacity-50" : ""}`}
+              type="button"
+              onClick={() => {
+                setShowCustomInput(true);
+                setCustomCards(
+                  CARDS_PER_SESSION_PRESETS.includes(cardsPerSession)
+                    ? ""
+                    : String(cardsPerSession)
+                );
+              }}
+              disabled={savingCards}
+              className={`flex-1 py-3 rounded-lg font-medium text-sm transition-colors ${
+                showCustomInput
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              } ${savingCards ? "opacity-50" : ""}`}
             >
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                  emailEnabled ? "translate-x-5" : "translate-x-0"
-                }`}
-              />
+              직접 입력
             </button>
           </div>
-
-          {/* Day selection - only show if email is enabled */}
-          {emailEnabled && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  이메일 받을 요일
-                </label>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {DAYS_OF_WEEK.map((day) => (
-                    <button
-                      key={day.value}
-                      type="button"
-                      onClick={() => setQuizDay(day.value)}
-                      className={`py-3 px-4 rounded-lg font-medium touch-target transition-colors ${
-                        quizDay === day.value
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      }`}
-                    >
-                      {day.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
+          {showCustomInput && (
+            <div className="flex gap-2 mt-3">
+              <input
+                type="number"
+                min={5}
+                max={100}
+                value={customCards}
+                onChange={(e) => setCustomCards(e.target.value)}
+                placeholder="5-100"
+                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+              />
               <button
-                onClick={handleSaveDay}
-                disabled={savingDay}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 touch-target"
+                type="button"
+                onClick={() => {
+                  const n = parseInt(customCards, 10);
+                  if (n >= 5 && n <= 100) {
+                    handleSaveCardsPerSession(n);
+                  }
+                }}
+                disabled={savingCards || !customCards || parseInt(customCards, 10) < 5 || parseInt(customCards, 10) > 100}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
-                {savingDay ? "저장 중..." : savedDay ? "저장됨 ✓" : "요일 저장"}
+                저장
               </button>
-            </>
+            </div>
           )}
+          {savedCards && (
+            <p className="text-sm text-green-600 mt-2 text-center">저장됨 ✓</p>
+          )}
+        </div>
+      </div>
+
+      {/* Email settings */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">이메일 알림</h2>
+
+        <div className="space-y-4">
+          {/* Frequency selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              알림 빈도
+            </label>
+            <div className="flex gap-2">
+              {([
+                { value: "daily" as const, label: "매일" },
+                { value: "weekly" as const, label: "매주" },
+                { value: "off" as const, label: "끄기" },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setEmailFrequency(opt.value)}
+                  className={`flex-1 py-3 rounded-lg font-medium text-sm transition-colors ${
+                    emailFrequency === opt.value
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Day picker for weekly */}
+          {emailFrequency === "weekly" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                이메일 받을 요일
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {DAYS_OF_WEEK.map((day) => (
+                  <button
+                    key={day.value}
+                    type="button"
+                    onClick={() => setQuizDay(day.value)}
+                    className={`py-3 px-4 rounded-lg font-medium touch-target transition-colors ${
+                      quizDay === day.value
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={handleSaveEmailSettings}
+            disabled={savingEmail}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 touch-target"
+          >
+            {savingEmail ? "저장 중..." : savedEmail ? "저장됨 ✓" : "이메일 설정 저장"}
+          </button>
         </div>
       </div>
 
@@ -252,7 +404,7 @@ export function Settings() {
         </div>
       </div>
 
-      {/* Danger Zone - Delete Account */}
+      {/* Danger Zone */}
       <div className="bg-white rounded-lg shadow-sm p-6 border border-red-200">
         <h2 className="text-xl font-bold text-red-600 mb-4">계정 삭제</h2>
 

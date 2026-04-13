@@ -1,11 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { GroupProvider } from "./context/GroupContext";
 import { Home } from "./pages/Home";
 import { Quiz } from "./pages/Quiz";
 import { Admin } from "./pages/Admin";
 import { EmailLogs } from "./pages/EmailLogs";
 import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
+import { LandingPage } from "./pages/LandingPage";
 import { Layout } from "./components/Layout";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -44,6 +46,14 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function GroupRoutes() {
+  return (
+    <GroupProvider>
+      <Layout />
+    </GroupProvider>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -54,7 +64,15 @@ function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <Layout />
+                <LandingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/:group"
+            element={
+              <ProtectedRoute>
+                <GroupRoutes />
               </ProtectedRoute>
             }
           >

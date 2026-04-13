@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { useGroup } from "../context/GroupContext";
 
 interface LeaderboardEntry {
   id: string;
@@ -8,22 +9,22 @@ interface LeaderboardEntry {
   totalAttempts: number;
   correctAttempts: number;
   accuracy: number;
-  masteredChildren: number; // Children with interval >= 4 weeks OR marked as mastered
+  masteredChildren: number;
 }
 
 export function Leaderboard() {
   const { user } = useAuth();
+  const { group } = useGroup();
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchLeaderboard();
-  }, []);
+  }, [group]);
 
   async function fetchLeaderboard() {
     setLoading(true);
 
-    // Get all profiles with names
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, name");
@@ -34,49 +35,55 @@ export function Leaderboard() {
       return;
     }
 
-    // Get all quiz attempts
+    // Get children IDs for this group to scope attempts and progress
+    const { data: groupChildren } = await supabase
+      .from("children")
+      .select("id")
+      .eq("group_type", group);
+
+    const childIds = new Set((groupChildren || []).map((c) => c.id));
+
     const { data: attempts, error: attemptsError } = await supabase
       .from("quiz_attempts")
-      .select("user_id, is_correct");
+      .select("user_id, child_id, is_correct");
 
     if (attemptsError) {
       console.error("Error fetching attempts:", attemptsError);
     }
 
-    // Get all progress data (to count mastered children)
     const { data: progress, error: progressError } = await supabase
       .from("user_child_progress")
-      .select("user_id, interval_weeks, mastered");
+      .select("user_id, child_id, interval_days, mastered");
 
     if (progressError) {
       console.error("Error fetching progress:", progressError);
     }
 
-    // Build leaderboard entries
     const leaderboard: LeaderboardEntry[] = [];
 
     for (const profile of (profiles || []) as { id: string; name: string }[]) {
-      // Skip profiles without names (legacy users)
       if (!profile.name) continue;
 
-      // Count attempts for this user
       const userAttempts = (attempts || []).filter(
-        (a: { user_id: string; is_correct: boolean }) =>
-          a.user_id === profile.id
+        (a: { user_id: string; child_id: string; is_correct: boolean }) =>
+          a.user_id === profile.id && childIds.has(a.child_id)
       );
       const totalAttempts = userAttempts.length;
       const correctAttempts = userAttempts.filter(
         (a: { is_correct: boolean }) => a.is_correct
       ).length;
 
-      // Count mastered children (interval >= 4 weeks OR marked as mastered)
       const userProgress = (progress || []).filter(
-        (p: { user_id: string; interval_weeks: number; mastered?: boolean }) =>
-          p.user_id === profile.id
+        (p: {
+          user_id: string;
+          child_id: string;
+          interval_days: number;
+          mastered?: boolean;
+        }) => p.user_id === profile.id && childIds.has(p.child_id)
       );
       const masteredChildren = userProgress.filter(
-        (p: { interval_weeks: number; mastered?: boolean }) =>
-          p.interval_weeks >= 4 || p.mastered === true
+        (p: { interval_days: number; mastered?: boolean }) =>
+          p.interval_days >= 30 || p.mastered === true
       ).length;
 
       leaderboard.push({
@@ -90,7 +97,6 @@ export function Leaderboard() {
       });
     }
 
-    // Sort by mastered children (desc), then by accuracy (desc)
     leaderboard.sort((a, b) => {
       if (b.masteredChildren !== a.masteredChildren) {
         return b.masteredChildren - a.masteredChildren;
@@ -98,7 +104,8 @@ export function Leaderboard() {
       return b.accuracy - a.accuracy;
     });
 
-    setEntries(leaderboard);
+    // Only show users who have attempted at least once in this group
+    setEntries(leaderboard.filter((e) => e.totalAttempts > 0));
     setLoading(false);
   }
 
@@ -117,7 +124,9 @@ export function Leaderboard() {
 
   return (
     <div className="bg-white rounded-lg shadow-sm p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">🏆 리더보드</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">
+        🏆 리더보드
+      </h3>
 
       <div className="space-y-3">
         {entries.map((entry, index) => {
@@ -173,7 +182,7 @@ export function Leaderboard() {
       </div>
 
       <p className="text-xs text-gray-400 mt-4 text-center">
-        * 외운 아이: 4주 이상 간격으로 복습 중인 아이 수
+        * 외운 아이: 30일 이상 간격으로 복습 중인 아이 수
       </p>
     </div>
   );

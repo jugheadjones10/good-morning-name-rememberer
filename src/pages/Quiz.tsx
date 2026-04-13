@@ -2,8 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { useGroup } from "../context/GroupContext";
 import { QuizCard } from "../components/QuizCard";
-import type { Child, UserChildProgress, Profile } from "../lib/database.types";
+import { getDisplayName } from "../lib/koreanName";
+import { addDaysToDateString, getSgtDateString } from "../lib/date";
+import type { Child, UserChildProgress } from "../lib/database.types";
 
 interface ChildWithProgress extends Child {
   progress?: UserChildProgress;
@@ -12,7 +15,13 @@ interface ChildWithProgress extends Child {
 interface QuizState {
   children: ChildWithProgress[];
   currentIndex: number;
-  answers: { childId: string; answer: string; isCorrect: boolean }[];
+  answers: {
+    childId: string;
+    answer: string;
+    isCorrect: boolean;
+    wasDue: boolean;
+    newIntervalDays: number;
+  }[];
   showResult: boolean;
   completed: boolean;
 }
@@ -26,18 +35,37 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Get today's date in YYYY-MM-DD format
 function getTodayDate(): string {
-  return new Date().toISOString().split("T")[0];
+  return getSgtDateString();
+}
+
+function getYesterdayDate(): string {
+  return addDaysToDateString(getTodayDate(), -1);
+}
+
+function applyFuzz(interval: number): number {
+  if (interval < 8) return interval;
+  const fuzz = Math.ceil(0.05 * interval);
+  const choices = [-fuzz, 0, fuzz];
+  return interval + choices[Math.floor(Math.random() * choices.length)];
+}
+
+function isMasteredProgress(progress?: UserChildProgress): boolean {
+  if (!progress) return false;
+  return progress.mastered || progress.interval_days >= 180;
 }
 
 export function Quiz() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const { group } = useGroup();
   const [loading, setLoading] = useState(true);
   const [totalChildren, setTotalChildren] = useState(0);
-  const [hideSurname, setHideSurname] = useState(false);
-  const [practiceMode, setPracticeMode] = useState(false);
-  const [allChildrenCache, setAllChildrenCache] = useState<Child[]>([]);
+  const hideSurname = profile?.hide_surname ?? true;
+  const cardsPerSession = profile?.cards_per_session ?? 20;
+  const [remainingDue, setRemainingDue] = useState(0);
+  const [remainingNew, setRemainingNew] = useState(0);
+  const [streakUpdated, setStreakUpdated] = useState(false);
+  const [updatedStreak, setUpdatedStreak] = useState(0);
   const [quiz, setQuiz] = useState<QuizState>({
     children: [],
     currentIndex: 0,
@@ -48,32 +76,17 @@ export function Quiz() {
 
   useEffect(() => {
     if (user) {
-      fetchHideSurnameSetting();
-      fetchChildrenDueForReview();
+      loadChildren();
     }
-  }, [user]);
+  }, [user, group]);
 
-  async function fetchHideSurnameSetting() {
-    // Fetch the hide_surname setting from any admin profile
-    const { data } = await supabase
-      .from("profiles")
-      .select("hide_surname")
-      .eq("is_admin", true)
-      .limit(1)
-      .single();
-
-    if (data) {
-      setHideSurname((data as Profile).hide_surname || false);
-    }
-  }
-
-  async function fetchChildrenDueForReview() {
+  async function loadChildren() {
     if (!user) return;
 
-    // Get all children
     const { data: allChildren, error: childrenError } = await supabase
       .from("children")
-      .select("*");
+      .select("*")
+      .eq("group_type", group);
 
     if (childrenError) {
       console.error("Error fetching children:", childrenError);
@@ -83,9 +96,7 @@ export function Quiz() {
 
     const childrenList = (allChildren as Child[]) || [];
     setTotalChildren(childrenList.length);
-    setAllChildrenCache(childrenList);
 
-    // Get user's progress for all children
     const { data: progressData, error: progressError } = await supabase
       .from("user_child_progress")
       .select("*")
@@ -95,46 +106,66 @@ export function Quiz() {
       console.error("Error fetching progress:", progressError);
     }
 
-    const progressMap = new Map<string, UserChildProgress>();
+    const pMap = new Map<string, UserChildProgress>();
     ((progressData as UserChildProgress[]) || []).forEach((p) => {
-      progressMap.set(p.child_id, p);
+      pMap.set(p.child_id, p);
     });
 
-    const today = getTodayDate();
-
-    // Filter children that are due for review:
-    // 1. No progress record (new child) -> due immediately
-    // 2. next_review_date <= today -> due for review
-    // 3. Not marked as mastered
-    const dueChildren: ChildWithProgress[] = ((allChildren as Child[]) || [])
-      .filter((child) => {
-        const progress = progressMap.get(child.id);
-        if (!progress) return true; // New child, due immediately
-        if (progress.mastered) return false; // Skip mastered children
-        return progress.next_review_date <= today;
-      })
-      .map((child) => ({
-        ...child,
-        progress: progressMap.get(child.id),
-      }));
-
-    setQuiz((prev) => ({
-      ...prev,
-      children: shuffleArray(dueChildren),
+    const allWithProgress: ChildWithProgress[] = childrenList.map((child) => ({
+      ...child,
+      progress: pMap.get(child.id),
     }));
+
+    buildSessionDeck(allWithProgress);
     setLoading(false);
   }
 
-  // Preload next images to eliminate delay when switching cards
+  function buildSessionDeck(children: ChildWithProgress[]) {
+    const today = getTodayDate();
+    const N = cardsPerSession;
+
+    const reviewPool = children.filter((child) => {
+      if (!child.progress) return false;
+      if (isMasteredProgress(child.progress)) return false;
+      return child.progress.next_review_date <= today;
+    });
+
+    const newPool = children.filter((child) => !child.progress);
+
+    const shuffledReview = shuffleArray(reviewPool);
+    const shuffledNew = shuffleArray(newPool);
+
+    const deck: ChildWithProgress[] = [];
+    deck.push(...shuffledReview.slice(0, N));
+    if (deck.length < N) {
+      deck.push(...shuffledNew.slice(0, N - deck.length));
+    }
+
+    const usedReview = Math.min(shuffledReview.length, N);
+    const usedNew = Math.min(shuffledNew.length, Math.max(0, N - usedReview));
+
+    setRemainingDue(shuffledReview.length - usedReview);
+    setRemainingNew(shuffledNew.length - usedNew);
+
+    const finalDeck = shuffleArray(deck);
+
+    setStreakUpdated(false);
+    setQuiz({
+      children: finalDeck,
+      currentIndex: 0,
+      answers: [],
+      showResult: false,
+      completed: false,
+    });
+  }
+
+  // Preload next images
   useEffect(() => {
     if (quiz.children.length === 0) return;
-
-    // Preload the next 2 images
     const nextChildren = quiz.children.slice(
       quiz.currentIndex + 1,
       quiz.currentIndex + 3
     );
-
     nextChildren.forEach((child) => {
       const img = new Image();
       img.src = child.photo_url;
@@ -144,24 +175,32 @@ export function Quiz() {
   const handleAnswer = useCallback(
     async (isCorrect: boolean, answer: string) => {
       const currentChild = quiz.children[quiz.currentIndex];
+      const today = getTodayDate();
+      const isDue =
+        !currentChild.progress ||
+        (!isMasteredProgress(currentChild.progress) &&
+          currentChild.progress.next_review_date <= today);
 
-      // Only record attempts and update progress in normal mode (not practice)
-      if (!practiceMode) {
-        await supabase.from("quiz_attempts").insert({
-          user_id: user!.id,
-          child_id: currentChild.id,
-          user_answer: answer,
-          is_correct: isCorrect,
-        } as any);
+      await supabase.from("quiz_attempts").insert({
+        user_id: user!.id,
+        child_id: currentChild.id,
+        user_answer: answer,
+        is_correct: isCorrect,
+      } as any);
 
-        await updateProgress(currentChild, isCorrect);
-      }
+      const result = await updateProgress(currentChild, isCorrect, isDue);
 
       setQuiz((prev) => ({
         ...prev,
         answers: [
           ...prev.answers,
-          { childId: currentChild.id, answer, isCorrect },
+          {
+            childId: currentChild.id,
+            answer,
+            isCorrect,
+            wasDue: isDue,
+            newIntervalDays: result.newIntervalDays,
+          },
         ],
         showResult: true,
       }));
@@ -169,11 +208,18 @@ export function Quiz() {
     [quiz.children, quiz.currentIndex, user]
   );
 
-  async function updateProgress(child: ChildWithProgress, isCorrect: boolean) {
-    if (!user) return;
+  async function updateProgress(
+    child: ChildWithProgress,
+    isCorrect: boolean,
+    isDue: boolean
+  ): Promise<{ newIntervalDays: number }> {
+    if (!user) return { newIntervalDays: 1 };
 
-    // First, get the CURRENT progress from DB (not stale local copy)
-    // This handles the case where user restarts quiz and answers same child again
+    // Correct on non-due card: no progress change
+    if (isCorrect && !isDue) {
+      return { newIntervalDays: child.progress?.interval_days ?? 1 };
+    }
+
     const { data: currentProgress } = await supabase
       .from("user_child_progress")
       .select("*")
@@ -181,59 +227,107 @@ export function Quiz() {
       .eq("child_id", child.id)
       .single();
 
-    const existingProgress = currentProgress as UserChildProgress | null;
+    const existing = currentProgress as UserChildProgress | null;
 
-    if (existingProgress) {
-      // Update existing progress
-      let newIntervalWeeks: number;
-      let newConsecutiveCorrect: number;
+    if (existing) {
+      let newIntervalDays: number;
+      let newEase = existing.ease_factor;
+      let newConsecutive = existing.consecutive_correct;
+      let mastered = false;
 
       if (isCorrect) {
-        // Correct: increase interval by 1 week
-        newIntervalWeeks = existingProgress.interval_weeks + 1;
-        newConsecutiveCorrect = existingProgress.consecutive_correct + 1;
+        // SM-2: exponential growth via ease factor
+        if (existing.interval_days <= 1) {
+          newIntervalDays = 3;
+        } else {
+          newIntervalDays = Math.round(existing.interval_days * newEase);
+        }
+        newIntervalDays = applyFuzz(newIntervalDays);
+        newConsecutive += 1;
+        if (newIntervalDays >= 180) mastered = true;
       } else {
-        // Incorrect: reset to 1 week
-        newIntervalWeeks = 1;
-        newConsecutiveCorrect = 0;
+        // Wrong: halve interval, reduce ease
+        newEase = Math.max(1.3, newEase - 0.2);
+        newIntervalDays = Math.max(1, Math.floor(existing.interval_days * 0.5));
+        newConsecutive = 0;
+        mastered = false;
       }
 
-      // Calculate next review date
-      const nextReview = new Date();
-      nextReview.setDate(nextReview.getDate() + newIntervalWeeks * 7);
-      const nextReviewDate = nextReview.toISOString().split("T")[0];
+      const nextReviewDate = addDaysToDateString(
+        getTodayDate(),
+        mastered ? 3650 : newIntervalDays
+      );
 
       await supabase
         .from("user_child_progress")
         .update({
-          interval_weeks: newIntervalWeeks,
+          interval_days: newIntervalDays,
+          ease_factor: newEase,
           next_review_date: nextReviewDate,
           last_reviewed_at: new Date().toISOString(),
-          consecutive_correct: newConsecutiveCorrect,
+          consecutive_correct: newConsecutive,
+          mastered,
         } as any)
-        .eq("id", existingProgress.id);
+        .eq("id", existing.id);
+
+      return { newIntervalDays };
     } else {
-      // Create new progress record
-      const intervalWeeks = isCorrect ? 2 : 1; // If correct first time, start at 2 weeks
-      const nextReview = new Date();
-      nextReview.setDate(nextReview.getDate() + intervalWeeks * 7);
-      const nextReviewDate = nextReview.toISOString().split("T")[0];
+      // First review: create new progress record
+      const intervalDays = isCorrect ? 1 : 1;
+      const nextReviewDate = addDaysToDateString(getTodayDate(), intervalDays);
 
       await supabase.from("user_child_progress").insert({
         user_id: user.id,
         child_id: child.id,
-        interval_weeks: intervalWeeks,
+        interval_days: intervalDays,
+        ease_factor: 2.5,
         next_review_date: nextReviewDate,
         last_reviewed_at: new Date().toISOString(),
         consecutive_correct: isCorrect ? 1 : 0,
       } as any);
+
+      return { newIntervalDays: intervalDays };
     }
+  }
+
+  async function updateStreak() {
+    if (!user || !profile || streakUpdated) return;
+
+    const today = getTodayDate();
+    const yesterday = getYesterdayDate();
+    const lastDate = profile.last_session_date;
+
+    let newStreak: number;
+    if (lastDate === today) {
+      setStreakUpdated(true);
+      setUpdatedStreak(profile.current_streak);
+      return;
+    } else if (lastDate === yesterday) {
+      newStreak = profile.current_streak + 1;
+    } else {
+      newStreak = 1;
+    }
+
+    const newLongest = Math.max(profile.longest_streak, newStreak);
+
+    await supabase
+      .from("profiles")
+      .update({
+        current_streak: newStreak,
+        longest_streak: newLongest,
+        last_session_date: today,
+      } as any)
+      .eq("id", profile.id);
+
+    setStreakUpdated(true);
+    setUpdatedStreak(newStreak);
   }
 
   function handleNext() {
     const nextIndex = quiz.currentIndex + 1;
     if (nextIndex >= quiz.children.length) {
       setQuiz((prev) => ({ ...prev, completed: true }));
+      updateStreak();
     } else {
       setQuiz((prev) => ({
         ...prev,
@@ -243,80 +337,9 @@ export function Quiz() {
     }
   }
 
-  async function markAsMastered() {
-    if (!user) return;
-
-    const currentChild = quiz.children[quiz.currentIndex];
-
-    // Get or create progress record and mark as mastered
-    const { data: existingProgress } = await supabase
-      .from("user_child_progress")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("child_id", currentChild.id)
-      .single();
-
-    if (existingProgress) {
-      const { error } = await supabase
-        .from("user_child_progress")
-        .update({ mastered: true } as any)
-        .eq("id", (existingProgress as UserChildProgress).id);
-
-      if (error) {
-        console.error("Error marking as mastered:", error);
-        alert("저장 중 오류가 발생했습니다.");
-        return;
-      }
-    } else {
-      // Create new progress record marked as mastered
-      // Set a far future review date so it won't appear again
-      const farFuture = new Date();
-      farFuture.setFullYear(farFuture.getFullYear() + 10);
-
-      const { error } = await supabase.from("user_child_progress").insert({
-        user_id: user.id,
-        child_id: currentChild.id,
-        interval_weeks: 52, // 1 year
-        next_review_date: farFuture.toISOString().split("T")[0],
-        consecutive_correct: 0,
-        mastered: true,
-      } as any);
-
-      if (error) {
-        console.error("Error creating mastered record:", error);
-        alert("저장 중 오류가 발생했습니다.");
-        return;
-      }
-    }
-
-    // Move to next card
-    handleNext();
-  }
-
-  function restartQuiz() {
-    setQuiz({
-      children: shuffleArray(quiz.children),
-      currentIndex: 0,
-      answers: [],
-      showResult: false,
-      completed: false,
-    });
-  }
-
-  function startPracticeQuiz() {
-    // Use all children for practice
-    const practiceChildren = allChildrenCache;
-
-    if (practiceChildren.length === 0) return;
-
-    setPracticeMode(true);
-    setQuiz({
-      children: shuffleArray(practiceChildren),
-      currentIndex: 0,
-      answers: [],
-      showResult: false,
-      completed: false,
-    });
+  async function startAnotherSession() {
+    setLoading(true);
+    await loadChildren();
   }
 
   if (loading) {
@@ -355,50 +378,51 @@ export function Quiz() {
     );
   }
 
-  if (quiz.children.length === 0 && !practiceMode) {
+  if (quiz.children.length === 0) {
+    const allDone = remainingDue === 0 && remainingNew === 0;
     return (
       <div className="bg-white rounded-lg shadow-sm p-6 text-center">
-        <div className="text-6xl mb-4">🎉</div>
+        <div className="text-6xl mb-4">{allDone ? "🏆" : "🎉"}</div>
         <h3 className="text-xl font-bold text-gray-900 mb-2">
-          오늘 복습 완료!
+          {allDone ? "모든 아이를 외웠어요!" : "오늘 복습 완료!"}
         </h3>
-        <p className="text-gray-600 mb-4">
-          복습할 아이가 없습니다. 잘 하셨어요!
+        <p className="text-gray-600 mb-6">
+          {allDone
+            ? `전체 ${totalChildren}명을 완벽하게 외웠습니다!`
+            : "복습할 아이가 없습니다. 잘 하셨어요!"}
         </p>
-        <p className="text-sm text-gray-500 mb-6">
-          전체 {totalChildren}명 중 모든 아이의 다음 복습일이 아직 오지
-          않았습니다.
-        </p>
-        <div className="space-y-3">
-          <button
-            onClick={startPracticeQuiz}
-            className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700"
-          >
-            더 연습하기
-          </button>
-          <Link
-            to="/"
-            className="block w-full bg-gray-100 text-gray-700 px-6 py-3 rounded-lg font-medium hover:bg-gray-200"
-          >
-            홈으로
-          </Link>
-        </div>
+        <Link
+          to=".."
+          className="block w-full bg-gray-100 text-gray-700 px-6 py-3 rounded-lg font-medium hover:bg-gray-200"
+        >
+          홈으로
+        </Link>
       </div>
     );
   }
 
-  // Quiz completed
+  // Quiz completed — show summary
   if (quiz.completed) {
     const correctCount = quiz.answers.filter((a) => a.isCorrect).length;
     const totalCount = quiz.answers.length;
-    const accuracy = (correctCount / totalCount) * 100;
+    const accuracy = totalCount > 0 ? (correctCount / totalCount) * 100 : 0;
+    const moreAvailable = remainingDue > 0 || remainingNew > 0;
 
     return (
       <div className="bg-white rounded-lg shadow-sm p-6 text-center">
         <div className="text-6xl mb-4">
           {accuracy >= 80 ? "🎉" : accuracy >= 50 ? "👍" : "💪"}
         </div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">퀴즈 완료!</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">세션 완료!</h2>
+
+        {streakUpdated && updatedStreak > 0 && (
+          <div className="my-4 flex items-center justify-center gap-2">
+            <span className="text-2xl">🔥</span>
+            <span className="text-xl font-bold text-orange-600">
+              {updatedStreak}일 연속
+            </span>
+          </div>
+        )}
 
         <div className="my-6">
           <div className="text-5xl font-bold text-blue-600">
@@ -410,29 +434,22 @@ export function Quiz() {
         </div>
 
         <div className="space-y-3">
-          <button
-            onClick={restartQuiz}
-            className="w-full bg-blue-600 text-white py-4 rounded-lg font-medium hover:bg-blue-700 touch-target text-lg"
-          >
-            다시 시작
-          </button>
-          {!practiceMode && (
+          {moreAvailable && (
             <button
-              onClick={startPracticeQuiz}
-              className="w-full bg-purple-600 text-white py-4 rounded-lg font-medium hover:bg-purple-700 touch-target text-lg"
+              onClick={startAnotherSession}
+              className="w-full bg-blue-600 text-white py-4 rounded-lg font-medium hover:bg-blue-700 touch-target text-lg"
             >
-              더 연습하기
+              한 세션 더 하기
             </button>
           )}
           <Link
-            to="/"
+            to=".."
             className="block w-full bg-gray-100 text-gray-700 py-4 rounded-lg font-medium hover:bg-gray-200 touch-target text-lg"
           >
             홈으로
           </Link>
         </div>
 
-        {/* Show wrong answers */}
         {quiz.answers.filter((a) => !a.isCorrect).length > 0 && (
           <div className="mt-6 text-left">
             <h3 className="font-medium text-gray-900 mb-3">틀린 문제</h3>
@@ -461,7 +478,7 @@ export function Quiz() {
                         <div className="text-sm text-gray-600">
                           정답:{" "}
                           <span className="text-green-600 font-medium">
-                            {hideSurname ? child?.name.slice(1) : child?.name}
+                            {child ? getDisplayName(child.name, hideSurname) : ""}
                           </span>
                         </div>
                       </div>
@@ -480,15 +497,6 @@ export function Quiz() {
 
   return (
     <div className="space-y-4">
-      {/* Practice mode badge */}
-      {practiceMode && (
-        <div className="bg-purple-100 border border-purple-200 rounded-lg p-3 text-center">
-          <span className="text-purple-700 font-medium text-sm">
-            연습 모드 - 기록에 반영되지 않습니다
-          </span>
-        </div>
-      )}
-
       {/* Progress bar */}
       <div className="bg-white rounded-lg shadow-sm p-4">
         <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
@@ -499,9 +507,7 @@ export function Quiz() {
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
-            className={`h-2 rounded-full transition-all duration-300 ${
-              practiceMode ? "bg-purple-600" : "bg-blue-600"
-            }`}
+            className="h-2 rounded-full transition-all duration-300 bg-blue-600"
             style={{
               width: `${
                 ((quiz.currentIndex + 1) / quiz.children.length) * 100
@@ -515,20 +521,32 @@ export function Quiz() {
       <QuizCard
         child={currentChild}
         onAnswer={handleAnswer}
-        onMarkMastered={practiceMode ? undefined : markAsMastered}
         showResult={quiz.showResult}
         userAnswer={currentAnswer?.answer ?? null}
         hideSurname={hideSurname}
+        intervalDays={currentChild.progress?.interval_days ?? 0}
+        answerResult={
+          currentAnswer
+            ? {
+                wasDue: currentAnswer.wasDue,
+                newIntervalDays: currentAnswer.newIntervalDays,
+              }
+            : undefined
+        }
       />
 
       {/* Next button */}
       {quiz.showResult && (
-        <button
-          onClick={handleNext}
-          className="w-full bg-blue-600 text-white py-4 rounded-lg font-medium hover:bg-blue-700 touch-target text-lg"
-        >
-          {quiz.currentIndex + 1 >= quiz.children.length ? "결과 보기" : "다음"}
-        </button>
+        <div className="max-w-xs mx-auto">
+          <button
+            onClick={handleNext}
+            className="w-full bg-blue-600 text-white py-4 rounded-lg font-medium hover:bg-blue-700 touch-target text-lg"
+          >
+            {quiz.currentIndex + 1 >= quiz.children.length
+              ? "결과 보기"
+              : "다음"}
+          </button>
+        </div>
       )}
     </div>
   );

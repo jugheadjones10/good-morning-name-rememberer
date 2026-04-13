@@ -10,22 +10,32 @@ CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   email TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,  -- User's display name for leaderboard
-  quiz_day TEXT DEFAULT 'monday' CHECK (quiz_day IN ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')),
-  email_enabled BOOLEAN DEFAULT TRUE,  -- Whether to receive weekly quiz emails
+  quiz_day TEXT DEFAULT 'saturday' CHECK (quiz_day IN ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')),
+  group_type TEXT NOT NULL DEFAULT 'kindergarten' CHECK (group_type IN ('kindergarten', 'primary')),
+  email_enabled BOOLEAN DEFAULT TRUE,  -- Legacy; superseded by email_frequency
+  email_frequency TEXT NOT NULL DEFAULT 'daily' CHECK (email_frequency IN ('daily', 'weekly', 'off')),
   is_admin BOOLEAN DEFAULT FALSE,
-  hide_surname BOOLEAN DEFAULT FALSE,  -- Admin setting: hide first character (surname) in quiz
+  hide_surname BOOLEAN DEFAULT TRUE,  -- Per-user setting: hide first character (surname) in quiz
+  cards_per_session INTEGER NOT NULL DEFAULT 20,
+  current_streak INTEGER NOT NULL DEFAULT 0,
+  longest_streak INTEGER NOT NULL DEFAULT 0,
+  last_session_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Children table with Korean name validation
+-- Children table with flexible name validation
 CREATE TABLE IF NOT EXISTS children (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   photo_url TEXT NOT NULL,
+  group_type TEXT NOT NULL DEFAULT 'kindergarten' CHECK (group_type IN ('kindergarten', 'primary')),
+  department TEXT CHECK (department IN ('1부', '2부')),
+  grade INTEGER CHECK (grade BETWEEN 3 AND 6),
+  class_number INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  -- Validate Korean name is 2-5 characters (가-힣 range)
-  -- Covers: 2-char (김수), 3-char (김민수), 4-char (남궁민수), 5-char names
-  CONSTRAINT valid_korean_name CHECK (name ~ '^[\uAC00-\uD7AF]{2,5}$')
+  -- Allow Hangul/English names with spaces, apostrophes, periods, and hyphens
+  -- Length 2-20 chars
+  CONSTRAINT valid_child_name CHECK (name ~ '^[A-Za-z\uAC00-\uD7AF][A-Za-z\uAC00-\uD7AF .''-]{1,19}$')
 );
 
 -- Quiz attempts for tracking progress
@@ -44,11 +54,12 @@ CREATE TABLE IF NOT EXISTS user_child_progress (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   child_id UUID NOT NULL REFERENCES children(id) ON DELETE CASCADE,
-  interval_weeks INTEGER NOT NULL DEFAULT 1,  -- Current interval in weeks (min: 1)
+  interval_days INTEGER NOT NULL DEFAULT 1,  -- Current interval in days (SM-2 based)
+  ease_factor REAL NOT NULL DEFAULT 2.5,  -- SM-2 ease factor (min 1.3)
   next_review_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- When this child is due for review
   last_reviewed_at TIMESTAMPTZ,  -- Last time user reviewed this child
   consecutive_correct INTEGER NOT NULL DEFAULT 0,  -- Streak of correct answers
-  mastered BOOLEAN NOT NULL DEFAULT FALSE,  -- If true, child is fully memorized and won't appear in reviews
+  mastered BOOLEAN NOT NULL DEFAULT FALSE,  -- If true, child is fully memorized (interval >= 180d)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, child_id)  -- One progress record per user per child
 );

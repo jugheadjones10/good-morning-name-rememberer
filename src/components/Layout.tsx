@@ -1,16 +1,31 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useGroup } from "../context/GroupContext";
 import { FeedbackButton } from "./FeedbackButton";
 
 export function Layout() {
   const { profile, signOut } = useAuth();
+  const { group, groupLabel } = useGroup();
+  const base = `/${group}`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">☀️ 굿모닝 아이들</h1>
+          <div className="flex items-center gap-2">
+            <Link to="/" className="flex items-center gap-2">
+              <img src="/logo.png" alt="" className="h-8 w-auto" />
+              <h1 className="text-xl font-bold text-gray-900">
+                나섬 {groupLabel}
+              </h1>
+            </Link>
+            {profile && profile.current_streak > 0 && (
+              <span className="flex items-center gap-0.5 text-sm font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
+                🔥 {profile.current_streak}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <FeedbackButton />
             <button
@@ -33,7 +48,7 @@ export function Layout() {
         <div className="max-w-4xl mx-auto px-4">
           <div className="flex justify-around">
             <NavLink
-              to="/"
+              to={base}
               end
               className={({ isActive }) =>
                 `flex flex-col items-center py-3 px-4 touch-target ${
@@ -57,7 +72,7 @@ export function Layout() {
               <span className="text-xs mt-1">홈</span>
             </NavLink>
             <NavLink
-              to="/quiz"
+              to={`${base}/quiz`}
               className={({ isActive }) =>
                 `flex flex-col items-center py-3 px-4 touch-target ${
                   isActive ? "text-blue-600" : "text-gray-600"
@@ -81,7 +96,7 @@ export function Layout() {
             </NavLink>
             {profile?.is_admin && (
               <NavLink
-                to="/admin"
+                to={`${base}/admin`}
                 className={({ isActive }) =>
                   `flex flex-col items-center py-3 px-4 touch-target ${
                     isActive ? "text-blue-600" : "text-gray-600"
@@ -105,7 +120,7 @@ export function Layout() {
               </NavLink>
             )}
             <NavLink
-              to="/settings"
+              to={`${base}/settings`}
               className={({ isActive }) =>
                 `flex flex-col items-center py-3 px-4 touch-target ${
                   isActive ? "text-blue-600" : "text-gray-600"

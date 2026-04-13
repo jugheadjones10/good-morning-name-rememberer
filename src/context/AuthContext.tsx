@@ -98,8 +98,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .insert({
           email: email,
           name: name,
-          quiz_day: "monday",
+          quiz_day: "saturday",
+          email_frequency: "daily",
           is_admin: false,
+          cards_per_session: 20,
+          current_streak: 0,
+          longest_streak: 0,
         } as any)
         .select()
         .single();

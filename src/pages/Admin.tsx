@@ -2,9 +2,10 @@ import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { useGroup } from "../context/GroupContext";
 import { isValidKoreanName, getNameValidationError } from "../lib/koreanName";
 import { ImageEditor } from "../components/ImageEditor";
-import type { Child, Feedback, Profile } from "../lib/database.types";
+import type { Child, Feedback } from "../lib/database.types";
 
 interface OrphanedPhoto {
   name: string;
@@ -21,6 +22,7 @@ interface EditingImage {
 
 export function Admin() {
   const { user } = useAuth();
+  const { group } = useGroup();
   const [children, setChildren] = useState<Child[]>([]);
   const [orphanedPhotos, setOrphanedPhotos] = useState<OrphanedPhoto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,13 +46,11 @@ export function Admin() {
     string | null
   >(null);
   const [savingChildName, setSavingChildName] = useState(false);
-  const [hideSurname, setHideSurname] = useState(false);
-  const [savingHideSurname, setSavingHideSurname] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [group]);
 
   async function sendTestEmail() {
     if (!user?.email) {
@@ -63,7 +63,9 @@ export function Admin() {
 
     try {
       const response = await fetch(
-        `/api/send-quiz-email?test=true&email=${encodeURIComponent(user.email)}`
+        `/api/send-quiz-email?test=true&group=${group}&email=${encodeURIComponent(
+          user.email
+        )}`
       );
       const data = await response.json();
 
@@ -102,45 +104,8 @@ export function Admin() {
       fetchChildren(),
       fetchOrphanedPhotos(),
       fetchFeedback(),
-      fetchHideSurnameSetting(),
     ]);
     setLoading(false);
-  }
-
-  async function fetchHideSurnameSetting() {
-    // Fetch the hide_surname setting from any admin profile
-    const { data } = await supabase
-      .from("profiles")
-      .select("hide_surname")
-      .eq("is_admin", true)
-      .limit(1)
-      .single();
-
-    if (data) {
-      setHideSurname((data as Profile).hide_surname || false);
-    }
-  }
-
-  async function toggleHideSurname() {
-    setSavingHideSurname(true);
-    const newValue = !hideSurname;
-
-    try {
-      // Update all admin profiles with the new setting
-      const { error } = await supabase
-        .from("profiles")
-        .update({ hide_surname: newValue } as any)
-        .eq("is_admin", true);
-
-      if (error) throw error;
-
-      setHideSurname(newValue);
-    } catch (error) {
-      console.error("Error updating hide_surname:", error);
-      alert("설정 저장 중 오류가 발생했습니다.");
-    } finally {
-      setSavingHideSurname(false);
-    }
   }
 
   async function fetchFeedback() {
@@ -188,6 +153,7 @@ export function Admin() {
     const { data, error } = await supabase
       .from("children")
       .select("*")
+      .eq("group_type", group)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -272,7 +238,7 @@ export function Admin() {
 
   async function saveOrphanedPhoto(photo: OrphanedPhoto, index: number) {
     if (!isValidKoreanName(photo.inputName)) {
-      alert("올바른 한글 이름을 입력해주세요 (2~4글자)");
+      alert("올바른 이름을 입력해주세요 (2~20글자)");
       return;
     }
 
@@ -282,6 +248,7 @@ export function Admin() {
       const { error } = await supabase.from("children").insert({
         name: photo.inputName,
         photo_url: photo.url,
+        group_type: group,
       } as any);
 
       if (error) throw error;
@@ -399,6 +366,7 @@ export function Admin() {
       const { error: insertError } = await supabase.from("children").insert({
         name,
         photo_url: publicUrl,
+        group_type: group,
       } as any);
 
       if (insertError) {
@@ -543,37 +511,13 @@ export function Admin() {
               </p>
             )}
             <Link
-              to="/email-logs"
+              to="../email-logs"
               className="inline-block mt-3 text-sm text-purple-600 hover:text-purple-800 underline"
             >
               이메일 발송 로그 보기 →
             </Link>
           </div>
 
-          {/* Hide Surname Toggle */}
-          <div className="border-t border-gray-200 pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-gray-900">성 숨기기</p>
-                <p className="text-sm text-gray-600">
-                  퀴즈에서 이름의 첫 글자(성)를 숨깁니다. 예: 김민수 → 민수
-                </p>
-              </div>
-              <button
-                onClick={toggleHideSurname}
-                disabled={savingHideSurname}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                  hideSurname ? "bg-blue-600" : "bg-gray-200"
-                } ${savingHideSurname ? "opacity-50" : ""}`}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    hideSurname ? "translate-x-5" : "translate-x-0"
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -724,7 +668,7 @@ export function Admin() {
                       updateOrphanedPhotoName(index, e.target.value)
                     }
                     placeholder="이름 입력"
-                    maxLength={5}
+                    maxLength={20}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
                   />
                   <button
@@ -811,14 +755,14 @@ export function Admin() {
           {/* Name input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              이름 (한글 2~5글자)
+              이름 (2~20글자)
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => handleNameChange(e.target.value)}
               placeholder="예: 김민수"
-              maxLength={5}
+              maxLength={20}
               className={`w-full px-4 py-3 text-lg border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                 nameError ? "border-red-300" : "border-gray-300"
               }`}
@@ -879,7 +823,7 @@ export function Admin() {
                               ? "border-red-300"
                               : "border-gray-300"
                           }`}
-                          maxLength={5}
+                          maxLength={20}
                           autoFocus
                         />
                         {editingChildNameError && (

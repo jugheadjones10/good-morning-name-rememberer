@@ -51,7 +51,8 @@ export function Login() {
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center px-4">
       <div className="max-w-md w-full mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">☀️ 굿모닝 아이들</h1>
+          <img src="/logo.png" alt="나섬 아이들" className="h-20 w-auto mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-gray-900">나섬 아이들</h1>
           <p className="text-gray-600 mt-2">아이들의 이름을 기억해보세요</p>
         </div>
 

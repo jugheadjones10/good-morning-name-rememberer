@@ -2,16 +2,27 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { useGroup } from "../context/GroupContext";
 import { ProgressChart } from "../components/ProgressChart";
 import { Leaderboard } from "../components/Leaderboard";
+import { ReviewHistory } from "../components/ReviewHistory";
+import { getSgtDateString } from "../lib/date";
 import type { UserChildProgress } from "../lib/database.types";
+
+interface MasteryDistribution {
+  newCount: number;
+  star1: number;
+  star2: number;
+  star3: number;
+  star4: number;
+  total: number;
+}
 
 interface Stats {
   totalAttempts: number;
   correctAttempts: number;
-  totalChildren: number;
   recentAccuracy: number;
-  dueForReview: number;
+  mastery: MasteryDistribution;
 }
 
 interface ChildAccuracy {
@@ -32,63 +43,91 @@ interface QuizAttemptWithChild {
   children: { name: string } | null;
 }
 
+function computeMastery(
+  allChildren: { id: string }[],
+  progressMap: Map<string, UserChildProgress>
+): MasteryDistribution {
+  let newCount = 0;
+  let star1 = 0;
+  let star2 = 0;
+  let star3 = 0;
+  let star4 = 0;
+
+  for (const child of allChildren) {
+    const p = progressMap.get(child.id);
+    if (!p) {
+      newCount++;
+    } else if (p.mastered || p.interval_days >= 180) {
+      star4++;
+    } else if (p.interval_days >= 30) {
+      star3++;
+    } else if (p.interval_days >= 7) {
+      star2++;
+    } else {
+      star1++;
+    }
+  }
+
+  return { newCount, star1, star2, star3, star4, total: allChildren.length };
+}
+
 export function Home() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const { group } = useGroup();
   const [stats, setStats] = useState<Stats | null>(null);
   const [childAccuracies, setChildAccuracies] = useState<ChildAccuracy[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const cardsPerSession = profile?.cards_per_session ?? 20;
+  const currentStreak = profile?.current_streak ?? 0;
+  const lastSessionDate = profile?.last_session_date ?? null;
+  const today = getSgtDateString();
+  const completedToday = lastSessionDate === today;
 
   useEffect(() => {
     if (user) {
       fetchStats();
     }
-  }, [user]);
+  }, [user, group]);
 
   async function fetchStats() {
     setLoading(true);
 
-    // Fetch total children count
-    const { data: allChildren } = await supabase.from("children").select("id");
+    const { data: allChildren } = await supabase
+      .from("children")
+      .select("id")
+      .eq("group_type", group);
 
-    const childCount = allChildren?.length || 0;
+    const childIds = new Set((allChildren || []).map((c) => c.id));
 
-    // Fetch user's progress to calculate due for review
     const { data: progressData } = await supabase
       .from("user_child_progress")
       .select("*")
       .eq("user_id", user!.id);
 
-    const today = new Date().toISOString().split("T")[0];
     const progressMap = new Map<string, UserChildProgress>();
     ((progressData || []) as UserChildProgress[]).forEach((p) => {
-      progressMap.set(p.child_id, p);
+      if (childIds.has(p.child_id)) {
+        progressMap.set(p.child_id, p);
+      }
     });
 
-    // Count children due for review:
-    // 1. No progress record (new child) -> due
-    // 2. next_review_date <= today -> due
-    let dueCount = 0;
-    for (const child of allChildren || []) {
-      const progress = progressMap.get(child.id);
-      if (!progress || progress.next_review_date <= today) {
-        dueCount++;
-      }
-    }
+    const mastery = computeMastery(allChildren || [], progressMap);
 
-    // Fetch user's quiz attempts
     const { data: attempts } = await supabase
       .from("quiz_attempts")
       .select("*, children(name)")
       .eq("user_id", user!.id)
       .order("attempted_at", { ascending: false });
 
-    const typedAttempts = (attempts || []) as QuizAttemptWithChild[];
+    const typedAttempts = ((attempts || []) as QuizAttemptWithChild[]).filter(
+      (a) => childIds.has(a.child_id)
+    );
 
     if (typedAttempts.length > 0) {
       const totalAttempts = typedAttempts.length;
       const correctAttempts = typedAttempts.filter((a) => a.is_correct).length;
 
-      // Recent accuracy (last 50 attempts)
       const recent = typedAttempts.slice(0, 50);
       const recentCorrect = recent.filter((a) => a.is_correct).length;
       const recentAccuracy =
@@ -97,12 +136,10 @@ export function Home() {
       setStats({
         totalAttempts,
         correctAttempts,
-        totalChildren: childCount,
         recentAccuracy,
-        dueForReview: dueCount,
+        mastery,
       });
 
-      // Calculate per-child accuracy
       const childMap = new Map<
         string,
         { name: string; attempts: number; correct: number }
@@ -134,13 +171,11 @@ export function Home() {
 
       setChildAccuracies(accuracies);
     } else {
-      // No attempts yet, but still set stats for due count
       setStats({
         totalAttempts: 0,
         correctAttempts: 0,
-        totalChildren: childCount,
         recentAccuracy: 0,
-        dueForReview: dueCount,
+        mastery,
       });
     }
 
@@ -162,49 +197,134 @@ export function Home() {
 
   return (
     <div className="space-y-6">
-      {/* Welcome section */}
+      {/* Streak + Daily CTA */}
       <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">안녕하세요!</h2>
+        <div className="flex items-center justify-center mb-4">
+          {currentStreak > 0 ? (
+            <div className="flex items-center gap-2">
+              <span className="text-3xl">🔥</span>
+              <div className="text-center">
+                <span className="text-3xl font-bold text-orange-600">
+                  {currentStreak}
+                </span>
+                <span className="text-lg text-orange-600 ml-1">일 연속</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center">
+              <span className="text-3xl block mb-1">🔥</span>
+              <p className="text-gray-500 font-medium">
+                오늘 첫 세션을 시작하세요!
+              </p>
+            </div>
+          )}
+        </div>
 
-        {stats && stats.dueForReview > 0 ? (
-          <div className="bg-blue-50 rounded-lg p-4 mb-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-800 font-medium">오늘 복습할 아이</p>
-                <p className="text-sm text-blue-600">
-                  총 {stats.totalChildren}명 중
-                </p>
-              </div>
-              <div className="text-4xl font-bold text-blue-600">
-                {stats.dueForReview}명
-              </div>
+        {completedToday ? (
+          <div className="bg-green-50 rounded-lg p-4 mb-4 text-center">
+            <div className="flex items-center justify-center gap-2 mb-1">
+              <span className="text-xl">✅</span>
+              <p className="text-green-800 font-medium">오늘 세션 완료!</p>
             </div>
-          </div>
-        ) : stats ? (
-          <div className="bg-green-50 rounded-lg p-4 mb-4">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🎉</span>
-              <div>
-                <p className="text-green-800 font-medium">오늘 복습 완료!</p>
-                <p className="text-sm text-green-600">다음 복습일까지 쉬세요</p>
-              </div>
-            </div>
+            <p className="text-sm text-green-600">한 세션 더 할 수 있어요</p>
           </div>
         ) : null}
 
         <Link
-          to="/quiz"
+          to="quiz"
           className={`inline-flex items-center justify-center w-full py-4 rounded-lg font-medium touch-target text-lg ${
-            stats && stats.dueForReview > 0
-              ? "bg-blue-600 text-white hover:bg-blue-700"
-              : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+            completedToday
+              ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
         >
-          {stats && stats.dueForReview > 0
-            ? `퀴즈 시작하기 (${stats.dueForReview}명)`
-            : "퀴즈 시작하기"}
+          {completedToday
+            ? "한 세션 더 하기"
+            : `오늘의 세션 시작 (${cardsPerSession}장)`}
         </Link>
       </div>
+
+      {/* Mastery distribution */}
+      {stats && stats.mastery.total > 0 && (
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            암기 현황
+          </h3>
+
+          {/* Stacked progress bar */}
+          <div className="w-full h-4 rounded-full overflow-hidden flex bg-gray-100 mb-4">
+            {stats.mastery.star4 > 0 && (
+              <div
+                className="bg-yellow-400 h-full"
+                style={{ width: `${(stats.mastery.star4 / stats.mastery.total) * 100}%` }}
+              />
+            )}
+            {stats.mastery.star3 > 0 && (
+              <div
+                className="bg-orange-400 h-full"
+                style={{ width: `${(stats.mastery.star3 / stats.mastery.total) * 100}%` }}
+              />
+            )}
+            {stats.mastery.star2 > 0 && (
+              <div
+                className="bg-blue-400 h-full"
+                style={{ width: `${(stats.mastery.star2 / stats.mastery.total) * 100}%` }}
+              />
+            )}
+            {stats.mastery.star1 > 0 && (
+              <div
+                className="bg-sky-300 h-full"
+                style={{ width: `${(stats.mastery.star1 / stats.mastery.total) * 100}%` }}
+              />
+            )}
+            {stats.mastery.newCount > 0 && (
+              <div
+                className="bg-gray-200 h-full"
+                style={{ width: `${(stats.mastery.newCount / stats.mastery.total) * 100}%` }}
+              />
+            )}
+          </div>
+
+          {/* Legend rows */}
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-400">★★★★</span>
+                <span className="text-gray-600">완벽히 외움</span>
+              </div>
+              <span className="font-bold text-gray-900">{stats.mastery.star4}<span className="font-normal text-gray-500 ml-0.5">명</span></span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span><span className="text-orange-400">★★★</span><span className="text-gray-300">★</span></span>
+                <span className="text-gray-600">거의 다 외움</span>
+              </div>
+              <span className="font-bold text-gray-900">{stats.mastery.star3}<span className="font-normal text-gray-500 ml-0.5">명</span></span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span><span className="text-blue-400">★★</span><span className="text-gray-300">★★</span></span>
+                <span className="text-gray-600">알아가는 중</span>
+              </div>
+              <span className="font-bold text-gray-900">{stats.mastery.star2}<span className="font-normal text-gray-500 ml-0.5">명</span></span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span><span className="text-sky-300">★</span><span className="text-gray-300">★★★</span></span>
+                <span className="text-gray-600">막 시작</span>
+              </div>
+              <span className="font-bold text-gray-900">{stats.mastery.star1}<span className="font-normal text-gray-500 ml-0.5">명</span></span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">★★★★</span>
+                <span className="text-gray-600">아직 안 본 아이</span>
+              </div>
+              <span className="font-bold text-gray-900">{stats.mastery.newCount}<span className="font-normal text-gray-500 ml-0.5">명</span></span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats overview */}
       {stats && stats.totalAttempts > 0 && (
@@ -226,21 +346,8 @@ export function Home() {
               </div>
               <div className="text-sm text-gray-600 mt-1">최근 정답률</div>
             </div>
-            <div className="bg-purple-50 rounded-lg p-4 text-center">
-              <div className="text-3xl font-bold text-purple-600">
-                {stats.totalAttempts}
-              </div>
-              <div className="text-sm text-gray-600 mt-1">총 시도</div>
-            </div>
-            <div className="bg-orange-50 rounded-lg p-4 text-center">
-              <div className="text-3xl font-bold text-orange-600">
-                {stats.totalChildren - stats.dueForReview}
-              </div>
-              <div className="text-sm text-gray-600 mt-1">외운 아이</div>
-            </div>
           </div>
 
-          {/* Progress chart */}
           <ProgressChart userId={user!.id} />
         </div>
       )}
@@ -272,8 +379,8 @@ export function Home() {
         </div>
       )}
 
-      {/* Leaderboard */}
-      <Leaderboard />
+      {/* Leaderboard for kindergarten, ReviewHistory for primary */}
+      {group === "primary" ? <ReviewHistory /> : <Leaderboard />}
 
       {/* Empty state */}
       {stats && stats.totalAttempts === 0 && (

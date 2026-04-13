@@ -8,8 +8,14 @@ export type Database = {
           name: string;
           quiz_day: string;
           email_enabled: boolean;
+          email_frequency: "daily" | "weekly" | "off";
           is_admin: boolean;
           hide_surname: boolean;
+          group_type: "kindergarten" | "primary";
+          cards_per_session: number;
+          current_streak: number;
+          longest_streak: number;
+          last_session_date: string | null;
           created_at: string;
         };
         Insert: {
@@ -18,8 +24,14 @@ export type Database = {
           name: string;
           quiz_day?: string;
           email_enabled?: boolean;
+          email_frequency?: "daily" | "weekly" | "off";
           is_admin?: boolean;
           hide_surname?: boolean;
+          group_type?: "kindergarten" | "primary";
+          cards_per_session?: number;
+          current_streak?: number;
+          longest_streak?: number;
+          last_session_date?: string | null;
           created_at?: string;
         };
         Update: {
@@ -28,8 +40,14 @@ export type Database = {
           name?: string;
           quiz_day?: string;
           email_enabled?: boolean;
+          email_frequency?: "daily" | "weekly" | "off";
           is_admin?: boolean;
           hide_surname?: boolean;
+          group_type?: "kindergarten" | "primary";
+          cards_per_session?: number;
+          current_streak?: number;
+          longest_streak?: number;
+          last_session_date?: string | null;
           created_at?: string;
         };
       };
@@ -38,18 +56,30 @@ export type Database = {
           id: string;
           name: string;
           photo_url: string;
+          group_type: "kindergarten" | "primary";
+          department: string | null;
+          grade: number | null;
+          class_number: number | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           name: string;
           photo_url: string;
+          group_type?: "kindergarten" | "primary";
+          department?: string | null;
+          grade?: number | null;
+          class_number?: number | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           name?: string;
           photo_url?: string;
+          group_type?: "kindergarten" | "primary";
+          department?: string | null;
+          grade?: number | null;
+          class_number?: number | null;
           created_at?: string;
         };
       };
@@ -84,7 +114,8 @@ export type Database = {
           id: string;
           user_id: string;
           child_id: string;
-          interval_weeks: number;
+          interval_days: number;
+          ease_factor: number;
           next_review_date: string;
           last_reviewed_at: string | null;
           consecutive_correct: number;
@@ -95,7 +126,8 @@ export type Database = {
           id?: string;
           user_id: string;
           child_id: string;
-          interval_weeks?: number;
+          interval_days?: number;
+          ease_factor?: number;
           next_review_date?: string;
           last_reviewed_at?: string | null;
           consecutive_correct?: number;
@@ -106,7 +138,8 @@ export type Database = {
           id?: string;
           user_id?: string;
           child_id?: string;
-          interval_weeks?: number;
+          interval_days?: number;
+          ease_factor?: number;
           next_review_date?: string;
           last_reviewed_at?: string | null;
           consecutive_correct?: number;

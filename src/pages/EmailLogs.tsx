@@ -65,7 +65,7 @@ export function EmailLogs() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">이메일 발송 로그</h1>
         <Link
-          to="/admin"
+          to="../admin"
           className="text-sm text-blue-600 hover:text-blue-800"
         >
           ← 관리자 페이지
